@@ -89,8 +89,9 @@ int main(int argc, char* argv[]) {
   parseInput(in, processedInput);
   fclose(in);
 
-  int lines = processedInput.size();
-  for (int i = lines - 1; i > -1; --i) {
+  // Use int64s here to acount for long filesizes
+  int64_t lines = processedInput.size();
+  for (int64_t i = lines - 1; i > -1; --i) {
     fprintf(out, (processedInput[i]).c_str());
   }
   fclose(out);
