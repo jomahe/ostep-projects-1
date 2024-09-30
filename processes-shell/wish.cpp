@@ -11,7 +11,7 @@
 
 using namespace std;
 
-void parseInput(FILE* &file, vector<string>& commands) {
+void parseInput(FILE* &file, vector<char*> &commands) {
   if (!file) {
     cerr << "Invalid file!" << endl;
     exit(1);
@@ -21,37 +21,59 @@ void parseInput(FILE* &file, vector<string>& commands) {
   size_t lineLen = 0;
 
   while (getline(&line, &lineLen, file) != 0) {
-    commands.push_back(string(line));
+    commands.push_back(line);
   }
 
   free(line);
 }
 
-void handleCommandStatus(int& status) {
-  if (WIFEXITED(status) != 0) {
-    char error_message[30] = "An error has occurred\n";
-    write(STDERR_FILENO, error_message, strlen(error_message));
-  }
+void executeCommand(char* &command) {
+  /* 1. Fork the process */
+  pid_t rc = fork();
 
-  // Otherwise, command status should be 0 meaning command exited successfully
-}
+  if (rc < 0) {
+    cerr << "Fork failed" << endl;
+    exit(1);
+  } else if (rc == 0) {
+    /* 2. Parse the command into its arguments with strsep */
+    vector<char*> args;
+    char* currArg;
 
-void batchExecute(vector<string>& commands) {
-  for (string& command : commands) {
-    int rc = fork();
-    if (rc < 0) {
-
-    } else if (rc == 0) {
-      cout << "Running command: " << command << " on child process with pid: " << getpid() << endl;
-      int rc = system(command.c_str());
-      handleCommandStatus(rc);
-    } else {
-      int rcWait = wait(NULL);
-      cout << "Waiting for child with pid: "<< rcWait << endl;
+    while((currArg = strsep(&command, " ")) != NULL) {
+      args.push_back(currArg);
     }
+    /* TODO: comment this out after testing. */
+    cout << "Parsed input: " << args[0];
+    for (size_t i = 1; i < args.size(); ++i) cout << " " << args[i];
+
+    args.push_back(NULL);
+
+    /* 3. Execute the command in the CLI with execv*/
+    execv(args[0], const_cast<char**>(args.data()));
+  } else {
+    int* status;
+    waitpid(rc, status, 0);
+
+    /* 4. Handle the return value */
+    handleStatus(status);
   }
+
 }
 
+char* acceptInput() {
+  string currLine;
+  getline(cin, currLine);
+
+  return strdup(currLine.c_str());
+}
+
+void handleStatus(int* &status) {
+  if (WIFEXITED(status)) {
+    cout << "Child exited with status: " << WEXITSTATUS(status) << endl;
+  } else if (WIFSIGNALED(status)) {
+    cout << "Child terminated by signal: " << WTERMSIG(status) << endl;
+  }
+}
 
 int main(int argc, char* argv[]) {
   // We should be invoking the executable with either one or zero arguments
@@ -62,7 +84,7 @@ int main(int argc, char* argv[]) {
   } else if (argc == 2) {
     /* Read input from a batch file, execute the commands therein */
     FILE* in = nullptr;
-    vector<string> commands;
+    vector<char*> commands;
 
     if (!(in = fopen(argv[2], "r"))) {
       cerr << "wish: cannot open file: '" << argv[2] << "'"<< endl;
@@ -70,11 +92,15 @@ int main(int argc, char* argv[]) {
     }
 
     parseInput(in, commands);
-    batchExecute(commands);
+    for (char* &command : commands) {
+      executeCommand(command);
+    }
   } else {
     /* Enter interactive mode; allow user to type in one command at a time */
     while(true) {
-
+      cout << "wish> ";
+      char* command = acceptInput();
+      executeCommand(command);
     }
   }
   return 0;
