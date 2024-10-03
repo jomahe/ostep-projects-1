@@ -18,26 +18,21 @@ inline void printErrorMessage() {
   write(STDERR_FILENO, error_message, strlen(error_message));
 }
 
-char* inSearchPath(char* executable) {
-  cout << "jere" << endl;
-  char** editable = paths.data();
-  for (char* &path : paths) {
-    snprintf(path, paths.size(), "%s/%s", path, executable);
-    if (access(path, X_OK) == 0) {
-      cout << "path: " << path << endl;
-      return path;
-    }
-  }
-  cout << "here" << endl;
-  return nullptr;
+void overwritePaths(vector<char*> &args) {
+  args.erase(args.begin());
+  paths = move(args);
+  cout << "new size of paths: " << paths.size() << endl;
 }
 
-void handleStatus(int*& status) {
-  if (WIFEXITED(status)) {
-    cout << "Child exited with status: " << WEXITSTATUS(status) << endl;
-  } else if (WIFSIGNALED(status)) {
-    cout << "Child terminated by signal: " << WTERMSIG(status) << endl;
+char* inSearchPath(char* executable) {
+  char fullPath[1024];
+  for (char* &path : paths) {
+    snprintf(fullPath, sizeof(fullPath), "%s/%s", path, executable);
+    if (access(fullPath, X_OK) == 0) {
+      return strdup(fullPath);
+    }
   }
+  return nullptr;
 }
 
 void parseInput(FILE*& file, vector<char*>& commands) {
@@ -56,59 +51,52 @@ void parseInput(FILE*& file, vector<char*>& commands) {
   free(line);
 }
 
-void executeCommand(char*& command) {
+void executeCommand(char* &command) {
   /* Parse the command into its constituent arguments with strsep */
   vector<char*> args;
   char* currArg;
+  char* commandCopy = strdup(command);
 
-  while ((currArg = strsep(&command, " ")) != NULL) {
+  while ((currArg = strsep(&commandCopy, " ")) != NULL) {
     args.push_back(currArg);
   }
+  free(commandCopy);
 
   /* Handle built-in commands with parent process */
   if (strcmp(args[0], "exit") == 0) {
-    exit(0);
+    // Exit shouldn't be called with extra arguments
+    if (args.size() == 1) {
+      exit(0);
+    }
+    printErrorMessage();
   } else if (strcmp(args[0], "cd") == 0) {
     if (chdir(args[1]) == -1) printErrorMessage();
   } else if (strcmp(args[0], "path") == 0) {
-    for (size_t i = 1; i < args.size(); ++i) {
-      paths.push_back(args[i]);
-    }
-    args.push_back(nullptr);
+    overwritePaths(args);
   } else {  // If not a built-in command, we fork the process and run on a child
     pid_t pid = fork();
 
     if (pid > 0) {  // Parent process waits for the child, processes exit status
-      int* status;
-      waitpid(pid, status, 0);
-      cout << "waiting done" << endl;
-      handleStatus(status);
+      waitpid(pid, nullptr, 0);
     } else if (pid == 0) {  // Child process calls execv to execute command
       /* TODO: comment these two lines out after testing */
       cout << "Parsed input: " << args[0] << endl;
       for (size_t i = 1; i < args.size(); ++i) cout << " " << args[i];
 
       /* Check to see if the command is executable in any of the search paths */
-      cout << "here" << endl;
       char* path = inSearchPath(args[0]);
-      path += '/';
-      cout << "Path: " << path << endl;
 
       if (!path) {
         printErrorMessage();
       } else {
         /* Execute the command in the CLI with execv */
-        strcat(path, args[0]);
-        args[0] = path;
 
-        cout << "here" << endl;
         int rc = execv(path, args.data());
         if (rc == -1) {
           printErrorMessage();
         }
-        cout << "executed: " << path << " "
-             << args.data() << endl;
       }
+      exit(0);
     } else {
       printErrorMessage();
     }
@@ -149,6 +137,7 @@ int main(int argc, char* argv[]) {
       cout << "wish> ";
       char* command = acceptInput();
       executeCommand(command);
+      free(command);
     }
   }
   return 0;
