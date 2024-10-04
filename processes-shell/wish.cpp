@@ -13,7 +13,13 @@ using namespace std;
 
 vector<char*> paths;
 
-inline void printErrorMessage() {
+inline void printErrorMessage(char* outputFile = nullptr) {
+  int out = outputFile
+    ? open(outputFile, O_CREAT | O_WRONLY, 0644)
+    : STDERR_FILENO;
+
+  out = out == -1 ? STDERR_FILENO : out;  // Error handling for open() failing
+
   char error_message[30] = "An error has occurred\n";
   write(STDERR_FILENO, error_message, strlen(error_message));
 }
@@ -21,7 +27,6 @@ inline void printErrorMessage() {
 void overwritePaths(vector<char*> &args) {
   args.erase(args.begin());
   paths = move(args);
-  cout << "new size of paths: " << paths.size() << endl;
 }
 
 char* inSearchPath(char* executable) {
@@ -51,17 +56,62 @@ void parseInput(FILE*& file, vector<char*>& commands) {
   free(line);
 }
 
+int countOccurrences(char* argument, char c) {
+  int count = 0;
+  for (size_t i = 0; i < strlen(argument); ++i) {
+    count += (c == argument[i]);
+  }
+  return count;
+}
+
+char** parseForRedirects(char* argument) {
+  // Create an array to store the new args
+  char* newArgs[2 * countOccurrences(argument, '>') + 2];
+
+  return newArgs;
+}
+
 void executeCommand(char* &command) {
   /* Parse the command into its constituent arguments with strsep */
   vector<char*> args;
   char* currArg;
   char* commandCopy = strdup(command);
 
+  bool redirected = false;
+  size_t redirIndex;
+  char* outputFile = nullptr;
+
   while ((currArg = strsep(&commandCopy, " ")) != NULL) {
+    // Skip empty tokens due to multiple spaces
+    if (*currArg == '\0') continue;
+    parseForRedirects(currArg);
+
     args.push_back(currArg);
+
+    if (strcmp(currArg, ">") == 0) {
+      if (redirected || args.size() < 2) {  //  Not allowing more than one redirect
+        printErrorMessage(outputFile);
+        return;
+      }
+      redirected = true;
+      continue;
+    }
+
+    if (redirected) {
+      if (!outputFile) {
+        outputFile = currArg;
+      } else {
+        printErrorMessage();
+        return;
+      }
+    }
   }
   free(commandCopy);
 
+  if (redirected && !outputFile) {  // Handle case where user redirects but doesn't specify a file
+    printErrorMessage();
+    return;
+  }
   /* Handle built-in commands with parent process */
   if (strcmp(args[0], "exit") == 0) {
     // Exit shouldn't be called with extra arguments
@@ -85,16 +135,13 @@ void executeCommand(char* &command) {
 
       /* Check to see if the command is executable in any of the search paths */
       char* path = inSearchPath(args[0]);
-
       if (!path) {
         printErrorMessage();
       } else {
         /* Execute the command in the CLI with execv */
-
         int rc = execv(path, args.data());
-        if (rc == -1) {
-          printErrorMessage();
-        }
+
+        if (rc == -1) printErrorMessage();
       }
       exit(0);
     } else {
