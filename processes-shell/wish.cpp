@@ -3,6 +3,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <iostream>
 #include <sstream>
@@ -96,7 +97,7 @@ void executeCommand(char* &command) {
 
   while ((currArg = strsep(&commandCopy, " ")) != NULL) {
     // Skip empty tokens due to multiple spaces
-    // if (*currArg == '\0') continue;
+    if (*currArg == '\0') continue;
 
     /* Parse for redirects. If none found, currArg is maintained. */
     vector<char*> redirectArgs = parseForRedirects(currArg);
@@ -117,6 +118,7 @@ void executeCommand(char* &command) {
   }
   args.push_back(nullptr);
   free(commandCopy);
+  if (args.size() == 1) return;
 
   // for (size_t i = 0; i < args.size(); ++i) {
   //   if (args[i]) {
@@ -195,6 +197,11 @@ int main(int argc, char* argv[]) {
 
     vector<char*> commands = parseInput(in);
     for (char* command : commands) {
+      string rem_tabs = string(command);
+      rem_tabs.erase(
+        remove(rem_tabs.begin(), rem_tabs.end(), '\t'),
+        rem_tabs.end());
+      command = (char*) rem_tabs.c_str();
       executeCommand(command);
     }
     fclose(in);
