@@ -40,7 +40,8 @@ char* inSearchPath(char* executable) {
   return nullptr;
 }
 
-void parseInput(FILE*& file, vector<char*>& commands) {
+const vector<char*> parseInput(FILE*& file) {
+  vector<char*> commands;
   if (!file) {
     cerr << "Invalid file!" << endl;
     exit(1);
@@ -49,24 +50,36 @@ void parseInput(FILE*& file, vector<char*>& commands) {
   char* line = nullptr;
   size_t lineLen = 0;
 
-  while (getline(&line, &lineLen, file) != 0) {
-    commands.push_back(line);
+  while (getline(&line, &lineLen, file) != -1) {
+    size_t len = strlen(line);
+    if (line[len - 1] == '\n') line[len - 1] = '\0';
+    commands.push_back(strdup(line));
   }
 
   free(line);
+  return commands;
 }
 
-int countOccurrences(char* argument, char c) {
-  int count = 0;
-  for (size_t i = 0; i < strlen(argument); ++i) {
-    count += (c == argument[i]);
-  }
-  return count;
-}
-
-char** parseForRedirects(char* argument) {
+vector<char*> parseForRedirects(char* argument) {
   // Create an array to store the new args
-  char* newArgs[2 * countOccurrences(argument, '>') + 2];
+  vector<char*> newArgs;
+  char* before = nullptr;
+  char* after = nullptr;
+
+  char* redirPos = strchr(argument, '>');
+  if (redirPos != nullptr) {
+    *redirPos = '\0';
+    before = argument;
+
+    ++redirPos;
+    after = redirPos;
+
+    newArgs.push_back(before);
+    newArgs.push_back(">\0");
+    newArgs.push_back(after);
+  } else {
+    newArgs.push_back(argument);
+  }
 
   return newArgs;
 }
@@ -83,39 +96,40 @@ void executeCommand(char* &command) {
 
   while ((currArg = strsep(&commandCopy, " ")) != NULL) {
     // Skip empty tokens due to multiple spaces
-    if (*currArg == '\0') continue;
-    parseForRedirects(currArg);
+    // if (*currArg == '\0') continue;
 
-    args.push_back(currArg);
+    /* Parse for redirects. If none found, currArg is maintained. */
+    vector<char*> redirectArgs = parseForRedirects(currArg);
 
-    if (strcmp(currArg, ">") == 0) {
-      if (redirected || args.size() < 2) {  //  Not allowing more than one redirect
-        printErrorMessage(outputFile);
-        return;
-      }
-      redirected = true;
-      continue;
-    }
+    // for (char* &arg : redirectArgs) args.push_back(arg);
+    size_t newArgs = redirectArgs.size();
+    args.push_back(redirectArgs[0]);
 
-    if (redirected) {
-      if (!outputFile) {
-        outputFile = currArg;
-      } else {
-        printErrorMessage();
-        return;
-      }
+    outputFile = (newArgs > 2) ? redirectArgs.back() : outputFile;
+    redirected = (newArgs > 1);
+
+    // Handle case where user redirects but doesn't specify a file or many '>'
+    if (redirected && !outputFile ||
+        newArgs == 3 && strchr(outputFile, '>') != nullptr) {
+      printErrorMessage();
+      return;
     }
   }
+  args.push_back(nullptr);
   free(commandCopy);
 
-  if (redirected && !outputFile) {  // Handle case where user redirects but doesn't specify a file
-    printErrorMessage();
-    return;
-  }
+  // for (size_t i = 0; i < args.size(); ++i) {
+  //   if (args[i]) {
+  //       cout << "args[" << i << "]: " << args[i] << endl;
+  //   } else {
+  //       cout << "args[" << i << "]: (null)" << endl;
+  //   }
+  // }
+
   /* Handle built-in commands with parent process */
   if (strcmp(args[0], "exit") == 0) {
     // Exit shouldn't be called with extra arguments
-    if (args.size() == 1) {
+    if (args.size() == 2) {
       exit(0);
     }
     printErrorMessage();
@@ -129,16 +143,22 @@ void executeCommand(char* &command) {
     if (pid > 0) {  // Parent process waits for the child, processes exit status
       waitpid(pid, nullptr, 0);
     } else if (pid == 0) {  // Child process calls execv to execute command
-      /* TODO: comment these two lines out after testing */
-      cout << "Parsed input: " << args[0] << endl;
-      for (size_t i = 1; i < args.size(); ++i) cout << " " << args[i];
-
       /* Check to see if the command is executable in any of the search paths */
+      if (outputFile) {
+        int out = open(outputFile, O_WRONLY | O_CREAT | O_TRUNC, S_IRWXU);
+        if (out == -1) {
+          printErrorMessage();
+          return;
+        }
+        dup2(out, STDOUT_FILENO);
+        close(out);
+      }
       char* path = inSearchPath(args[0]);
       if (!path) {
         printErrorMessage();
       } else {
         /* Execute the command in the CLI with execv */
+        /* TODO: comment these two lines out after testing */
         int rc = execv(path, args.data());
 
         if (rc == -1) printErrorMessage();
@@ -161,23 +181,23 @@ int main(int argc, char* argv[]) {
   paths.push_back("/bin");
   // We should be invoking the executable with either one or zero arguments
   if (argc > 2) {
-    cerr << "Usage: ./wish <OPTIONAL FILENAME>" << endl;
+    printErrorMessage();
     exit(1);
 
   } else if (argc == 2) {
     /* Read input from a batch file, execute the commands therein */
     FILE* in = nullptr;
-    vector<char*> commands;
 
-    if (!(in = fopen(argv[2], "r"))) {
-      cerr << "wish: cannot open file: '" << argv[2] << "'" << endl;
+    if (!(in = fopen(argv[1], "r"))) {
+      printErrorMessage();
       exit(1);
     }
 
-    parseInput(in, commands);
-    for (char*& command : commands) {
+    vector<char*> commands = parseInput(in);
+    for (char* command : commands) {
       executeCommand(command);
     }
+    fclose(in);
   } else {
     /* Enter interactive mode; allow user to type in one command at a time */
     while (true) {
